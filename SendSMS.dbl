@@ -1,0 +1,271 @@
+;;To enable the service you must purchase a subscription from Informatica.  You can get demonstration licenses for testing.
+;;these are the license details and need to be defined with YOUR details
+.define D_EMAIL_ADDRESS ""
+.define D_USER_ID   	""
+.define D_PASSWORD  	""
+
+;;; <summary>
+;;; The main entry point for the application.
+;;; </summary>
+main
+record
+	result				,I4
+	errText,			a100
+endrecord
+proc
+
+	;;This is how to send an MSM message:
+	;;The first argument is the fully qualified destination number.  Use a + followed  by the country code and the number
+	;;The second argument is the "from" number although this is not presented to the destination phone.
+	;;Third argument is the name of the person to receive the message.
+	;;Forth argument is the message body.  the "name" argument is prepended to this string
+	;;The final argument is returned with the call status message.  "Message Queued" is a success.
+
+
+	;;Send a message
+	;;A response of 0 is a success.
+	result = send_sms_message("+11234561234", "+11234561234", "Richard", "Synergy calling...", errText)
+
+	;;As well as sending the message the web services will also check the number of messages you have left
+	;;as part of your subscription.  the CheckSMS routine will send out an email if the number of available
+	;;messages falls below a certain level - please review the code in CheckSMS for details of the logical
+	;;variables that should be set to enable this.
+
+	;;The routine will also log each transmission attempt to temp:SMSProcess.log
+
+endmain
+
+;
+;routine to send an SMS text confirmation message
+;
+.function send_sms_message, ^VAL
+in req a_to_number,				a   ;number to send to
+in req a_from_number,			a   ;from number
+in req a_from_name,				a   ;from name
+in req a_message,				a   ;message to send
+out req errText,				a   ;Text associated with any errors
+;end of argument list
+
+.include "DBLDIR:synxml.def"
+
+;define the location of the web service
+.define D_URL       'http://ws.strikeiron.com/StrikeIron/SMSAlerts4/GlobalSMSPro'
+
+;define required message headers
+.define D_XML_HEADER    'SOAPAction:"http://www.strikeiron.com/SendMessage"'
+
+;HTTP request timeout
+.define D_HTTP_TIMEOUT  10
+
+.align
+record
+	stlen,			i4
+endrecord
+
+.align
+record ivar
+	status,						D_ADDR      ;funtion status
+	soap_handle,				D_ADDR      ;SOAP request handle
+	soap_length,				D_ADDR      ;length of SOAP request memory
+	response_handle,			D_ADDR      ;response handle
+	response_length,			D_ADDR      ;length of the response
+	xml_handle,					D_ADDR      ;memory handle of the expanded response XML
+	xml_counter,				D_ADDR      ;memeory index counter
+	index,						D_ADDR      ;index counter
+	count,						D_ADDR      ;counter variable
+	response_code,				D_ADDR      ;status from the web service call
+	crap,						a100
+endrecord
+
+structure response_data
+	tag_name,				a50
+	element_data,			a100
+endstructure
+
+.align
+record avar
+	errtxt,					a500
+	response_text,			a20
+	tracking_tag,			a10
+	status_text,			a20
+	hit_count,				d10
+endrecord
+
+.align
+record
+	http_header,			[1]a*,				D_XML_HEADER
+endrecord
+
+.align
+record xmlvar
+	doc,						XML_DOC_TYPE
+	root,						XML_ELEM_TYPE
+	soap_header,				XML_ELEM_TYPE
+	action_info,				XML_ELEM_TYPE
+	license_info,				XML_ELEM_TYPE
+	registered_user,			XML_ELEM_TYPE
+	unregistered_user,			XML_ELEM_TYPE
+	email_id,					XML_ELEM_TYPE
+	user_id,					XML_ELEM_TYPE
+	email_address,				XML_ELEM_TYPE
+	soap_body,					XML_ELEM_TYPE
+	send_message,				XML_ELEM_TYPE
+	parameter,					XML_ELEM_TYPE
+	xml_string,					XML_STRING_TYPE
+	parser,						XML_PARSER_TYPE
+	root_children,				XML_ELEMLIST_TYPE
+endrecord
+
+.proc
+
+	clear ^i(ivar), ^i(xmlvar), avar
+
+	;create an XML document
+	doc = %xml_doc_create
+
+	;ensure we encode required characters
+	xcall xml_option("ENCODE", SYNESCAPE_ESCAPE)
+
+	;get the root element
+	root = %xml_doc_getroot(doc)
+
+	;create the SOAP envelope definitions schema references
+
+	status = %xml_doc_adddeclaration(doc, "xml", "version='1.0' encoding='UTF-8'")
+
+	xcall xml_elem_setname(root,"soap:Envelope")
+	xcall xml_elem_setattribute(root,"xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
+	xcall xml_elem_setattribute(root,"xmlns:xsd", "http://www.w3.org/2001/XMLSchema")
+	xcall xml_elem_setattribute(root,"xmlns:soap", "http://schemas.xmlsoap.org/soap/envelope/")
+
+	;create the SOAP header
+	soap_header = %xml_elem_create
+	xcall xml_elem_setname(soap_header, "soap:Header")
+	xcall xml_elem_addchild(root, soap_header)
+
+	license_info = %xml_elem_create
+	xcall xml_elem_setattribute(license_info,"xmlns", "http://ws.strikeiron.com")
+
+	xcall xml_elem_setname(license_info, "LicenseInfo")
+	xcall xml_elem_addchild(soap_header, license_info)
+
+	registered_user = %xml_elem_create
+	xcall xml_elem_setname(registered_user, "RegisteredUser")
+	xcall xml_elem_addchild(license_info, registered_user)
+
+	user_id = %xml_elem_create
+	xcall xml_elem_setname(user_id, "UserID")
+	xcall xml_elem_settext(user_id, D_USER_ID)
+	xcall xml_elem_addchild(registered_user, user_id)
+
+	user_id = %xml_elem_create
+	xcall xml_elem_setname(user_id, "Password")
+	xcall xml_elem_settext(user_id, D_PASSWORD)
+	xcall xml_elem_addchild(registered_user, user_id)
+
+	;create the SOAP body.  This contains the message details
+	soap_body = %xml_elem_create
+	xcall xml_elem_setname(soap_body, "soap:Body")
+	xcall xml_elem_addchild(root, soap_body)
+
+	send_message = %xml_elem_create
+	xcall xml_elem_setname(send_message, "SendMessage")
+	xcall xml_elem_setattribute(send_message,"xmlns", "http://www.strikeiron.com")
+	xcall xml_elem_addchild(soap_body, send_message)
+
+	parameter = %xml_elem_create
+	xcall xml_elem_setname(parameter, "ToNumber")
+	xcall xml_elem_settext(parameter, a_to_number)
+	xcall xml_elem_addchild(send_message, parameter)
+
+	parameter = %xml_elem_create
+	xcall xml_elem_setname(parameter, "FromName")
+	xcall xml_elem_settext(parameter, a_from_name)
+	xcall xml_elem_addchild(send_message, parameter)
+
+	parameter = %xml_elem_create
+	xcall xml_elem_setname(parameter, "MessageText")
+	xcall xml_elem_settext(parameter, a_message)
+	xcall xml_elem_addchild(send_message, parameter)
+
+	;convert the XML document to a string
+	xml_string = %xml_doc_tostring(doc)
+
+	;delete the document - clean up memory
+	xcall xml_doc_delete(doc)
+rcm,
+
+	;make the call to the web service
+	status = %http_client_post(D_URL, D_HTTP_TIMEOUT,
+	&	%xml_string_gethandle(xml_string), %xml_string_getsize(xml_string),
+	&	response_handle, response_length, errtxt, http_header, "temp:sms.log",,,,,HTTP_RELURI)
+
+	xcall xml_string_delete(xml_string)
+
+	if (status)
+	begin
+		xcall info_message(%string(status) + " : " + errtxt)
+		errText= errtxt
+		freturn status
+	end
+
+	clear errtxt
+
+	;create a parser
+	parser = %xml_parser_create
+
+	if (parser)
+	begin
+		;create an XML string
+		xml_string = %xml_string_create
+
+		;append our returned XML response handle
+		status = %xml_string_appendhandle(xml_string, response_handle, response_length)
+
+		;parser through the XML document
+		doc = %xml_parser_parsestring(parser, xml_string)
+		root = %xml_doc_getroot(doc)
+
+		;get the child elements of the root
+		root_children = %xml_elem_children(root)
+
+		index = 1
+		xcall expand_xml(root_children, index, xml_handle, xml_counter)
+
+		;work through the generated list of tags/data values and extract
+		;the required data.  We only need to check certain values
+
+		for count from 1 thru xml_counter
+		begin
+			using ^m(response_data[count].tag_name, xml_handle) select
+			("ResponseCode"),   response_code = ^m(response_data[count].element_data, xml_handle)
+			("Response"),   response_text = ^m(response_data[count].element_data, xml_handle)
+			("TrackingTag"),    tracking_tag = ^m(response_data[count].element_data, xml_handle)
+			("StatusDescription"),  status_text = ^m(response_data[count].element_data, xml_handle)
+			("RemainingHits"),  hit_count = ^m(response_data[count].element_data, xml_handle)
+			endusing
+		end
+	end
+
+	;display the results
+	if (!response_code)
+		xcall s_bld(errtxt,, "Your SMS message has been sent ")
+	xcall s_bld(errtxt, stlen = %trim(errtxt), "%&Send status: %a, Tracking tag: %a, Status: %a\n"
+	&	+ "You have %d remaining messages available."
+	&	,response_text
+	&	,tracking_tag
+	&	,status_text
+	&	,hit_count)
+
+	xcall checkSMS(hit_count)
+	xcall info_message(errtxt)
+	errText= status_text
+	freturn ^i(response_code)
+
+.end
+
+.undefine D_URL
+.undefine D_XML_HEADER
+.undefine D_HTTP_TIMEOUT
+.undefine D_USER_ID
+.undefine D_PASSWORD

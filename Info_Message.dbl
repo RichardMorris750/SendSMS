@@ -1,0 +1,47 @@
+.subroutine Info_message
+	message	,a
+	inTitle	,a
+	endparams
+
+.include 'WND:tools.def'
+
+
+	stack record avars
+	title	,a40
+
+	record
+	group datetime	,a20
+	group date		,a8
+	year	,a4
+	month	,a2
+	day		,a2
+	endgroup
+	group time	,a12
+	hour		,a2
+	minute		,a2
+	second		,a2
+	msecond		,a6
+	endgroup
+	endgroup
+	TimeStamp	,a22
+	slen		,d3
+
+	record
+	auditChannel	,i4
+
+.proc
+	datetime = %datetime()
+	xcall s_bld(TimeStamp, slen, "%A/%A/%A %A:%A:%A", day, month, year, hour, minute, second)
+
+
+	if (^passed(inTitle) && inTitle) then
+		title = inTitle
+	else
+		title = "Information"
+
+	open (auditChannel= syn_freechn(75), A:S, 'temp:SMSProcess.log')
+	writes(auditChannel, TimeStamp+ %atrim(title) + ' - '+%atrim(message))
+	close auditChannel
+	xreturn
+
+.end

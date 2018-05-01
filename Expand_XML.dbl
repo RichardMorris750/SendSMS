@@ -1,0 +1,67 @@
+;This routine will parse out an XML document and extract each tag and associated
+;data value.  These are then stored in a memory array
+;
+.subroutine Expand_xml, REENTRANT
+	a_list			,i       ;child list
+	a_index			,i       ;which element index
+	a_handle		,i       ;expanded data memory handle
+	a_entry			,i       ;entry number in memory structure
+	;end of argument list
+
+.include "DBLDIR:synxml.def"
+
+	structure response_data
+	tag_name		,a50
+	element_data	,a100
+
+	stack record ivar
+	element_count	,D_ADDR
+	counter			,D_ADDR
+
+	stack record xmlvar
+	element			,XML_ELEM_TYPE
+	element_list	,XML_ELEMLIST_TYPE
+
+.proc
+
+	clear ^i(ivar), ^i(xmlvar)
+
+	if (!a_handle)
+	then
+	begin
+		;this is the root element
+		;allocate memory
+		a_handle = %mem_proc(DM_ALLOC+DM_STATIC+DM_BLANK,
+		&	^size(response_data))
+
+		;set the passed root child list to the element list
+		element_list = a_list
+	end
+	else
+	begin
+		element = %xml_elemlist_item(a_list, a_index)
+		incr a_entry
+		a_handle = %mem_proc(DM_RESIZ+DM_STATIC+DM_BLANK,
+		&	^size(response_data) * a_entry, a_handle)
+
+		xcall xml_elem_getname(element,
+		&	^m(response_data[a_entry].tag_name, a_handle))
+
+		xcall xml_elem_gettext(element,
+		&	^m(response_data[a_entry].element_data, a_handle))
+
+		element_list = %xml_elem_children(element)
+	end
+
+	;does this element have any children?
+	if (element_list)
+	begin
+		element_count = %xml_elemlist_count(element_list)
+		for counter from 1 thru element_count
+		begin
+			xcall expand_xml(element_list, counter, a_handle, a_entry)
+		end
+	end
+
+	xreturn
+.end

@@ -1,0 +1,51 @@
+.subroutine CheckSMS
+	in  counter	,n
+
+	record callParams                                           
+	server				,a12	;example: '1.2.3.4'           		;SMTP server name or ip address
+	domain				,a40	;example: 'your-domain.com'			;Senders domain name
+	sender				,a40	;example: 'manager@your-domain.com'	;Senders e-mail address
+	sender_name			,a40	;example: 'manager@your-domain.com'	;Senders name
+	subject				,a35   ,'SMS message limits'				;Subject text
+	bodyarray			,[4]a80										;Body text array
+	countMin			,a10
+	logicalLength		,i4
+	countNotification	,a80
+	status				,i4
+	countMinimum		,i4
+
+.proc
+	bodyarray[1]= ''
+	bodyarray[2]= ''
+	bodyarray[3]= 'Please arrange for new licences if required'
+	bodyarray[4]= ''
+
+	if (((counter/100)* 100) != counter)
+		xreturn
+	
+	; Get SMTP server name or ip address
+	xcall getlog("EmailServerIP" , server , logicalLength)
+	
+	; Get domain and build sender & sender_name strings
+	xcall getlog("EmailDomain" , domain , logicalLength )
+	s_bld (sender, , "manager@%a", domain)
+	s_bld (sender_name, , "manager@%a", domain)
+
+	xcall getlog('SMS_HIT_COUNT_MINIMUM', countMin, logicalLength)
+	if logicalLength
+	begin
+		countMinimum= ^d(%atrim(countMin))
+		if (countMinimum>= counter)
+		begin
+			getlog('SMS_HIT_COUNT_NOTIFICATION', countNotification, logicalLength)
+			if (logicalLength)
+			begin
+				s_bld(bodyarray[2],,'The Hit counter for SMS messages has reached %d and the limit is %d', counter, countMinimum)
+				status=%smtpmail(server,domain,sender,sender_name,,%atrim(countNotification),,%atrim(subject), bodyarray)
+			end
+		end
+	end
+
+	xreturn
+
+.end
